@@ -12,62 +12,82 @@ def format_phone(phone):
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    phone = request.args.get("phone")
+    try:
+        phone = request.args.get("phone") or request.json.get("phone") if request.is_json else None
 
-    print("Keldi:", phone)
+        print("Keldi:", phone)
 
-    if not phone:
-        return jsonify({"error": "phone yo‘q"})
+        if not phone:
+            return jsonify({"error": "phone yo‘q"})
 
-    formatted = format_phone(phone)
+        formatted = format_phone(phone)
 
-    print("Kesilgan:", formatted)
+        print("Kesilgan:", formatted)
 
-    # 🔍 1. DUBLIKATNI QIDIRAMIZ
-    search = requests.post(
-        BITRIX_WEBHOOK + "crm.duplicate.findbycomm.json",
-        json={
-            "type": "PHONE",
-            "values": [formatted]
-        }
-    ).json()
+        # 🔍 1. Dublikat qidirish
+        try:
+            search = requests.post(
+                BITRIX_WEBHOOK + "crm.duplicate.findbycomm.json",
+                json={
+                    "type": "PHONE",
+                    "values": [formatted]
+                },
+                timeout=5
+            ).json()
 
-    print("Search:", search)
+            print("Search:", search)
 
-    contacts = search.get("result", {}).get("CONTACT", [])
+        except Exception as e:
+            print("Search error:", str(e))
+            return jsonify({"error": "search failed"})
 
-    if contacts:
-        contact_id = contacts[0]
-        print("Topildi:", contact_id)
+        contacts = search.get("result", {}).get("CONTACT", [])
 
-        # ✏️ UPDATE (kontaktga yozamiz)
-        requests.post(
-            BITRIX_WEBHOOK + "crm.contact.update.json",
-            json={
-                "id": contact_id,
-                "fields": {
-                    "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
-                }
-            }
-        )
+        # 🔄 Agar bor bo‘lsa UPDATE
+        if contacts:
+            contact_id = contacts[0]
+            print("Topildi:", contact_id)
 
-        return jsonify({"status": "updated"})
+            try:
+                requests.post(
+                    BITRIX_WEBHOOK + "crm.contact.update.json",
+                    json={
+                        "id": contact_id,
+                        "fields": {
+                            "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
+                        }
+                    },
+                    timeout=5
+                )
+            except Exception as e:
+                print("Update error:", str(e))
 
-    else:
-        print("Topilmadi → yangi yaratiladi")
+            return jsonify({"status": "updated", "id": contact_id})
 
-        # 🆕 YANGI KONTAKT
-        new_contact = requests.post(
-            BITRIX_WEBHOOK + "crm.contact.add.json",
-            json={
-                "fields": {
-                    "NAME": "Qo‘ng‘iroq",
-                    "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
-                }
-            }
-        ).json()
+        # 🆕 Agar yo‘q bo‘lsa CREATE
+        else:
+            print("Topilmadi → yangi yaratiladi")
 
-        return jsonify({"status": "created", "contact": new_contact})
+            try:
+                new_contact = requests.post(
+                    BITRIX_WEBHOOK + "crm.contact.add.json",
+                    json={
+                        "fields": {
+                            "NAME": "Qo‘ng‘iroq",
+                            "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
+                        }
+                    },
+                    timeout=5
+                ).json()
 
-import os
-app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+                print("New:", new_contact)
+
+            except Exception as e:
+                print("Create error:", str(e))
+                return jsonify({"error": "create failed"})
+
+            return jsonify({"status": "created", "contact": new_contact})
+
+    except Exception as e:
+        print("General error:", str(e))
+        return jsonify({"error": "server error"})
