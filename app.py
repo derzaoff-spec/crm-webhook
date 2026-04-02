@@ -7,55 +7,82 @@ app = Flask(__name__)
 BITRIX_WEBHOOK = "https://derza.bitrix24.kz/rest/1/bwmu5i9lq63ur1jc/"
 
 def format_phone(phone):
-    if phone:
-        phone = str(phone)
-        if phone.startswith("998"):
-            return phone[3:]
+    if phone and phone.startswith("998"):
+        return phone[3:]
     return phone
 
-@app.route('/')
-def home():
-    return "Server ishlayapti 🚀"
+def find_contact(phone):
+    response = requests.post(
+        BITRIX_WEBHOOK + "crm.contact.list.json",
+        json={
+            "filter": {"PHONE": phone},
+            "select": ["ID", "NAME"]
+        }
+    )
+    return response.json().get("result", [])
 
-@app.route('/webhook', methods=['GET', 'POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
-    # 👉 Browser test uchun
-    if request.method == 'GET':
-        return "Webhook ishlayapti ✅"
+    data = request.json
 
-    try:
-        data = request.get_json(force=True)
+    phone = data.get("phone")
 
-        print("Keldi:", data)
+    if not phone:
+        return jsonify({"error": "no phone"}), 400
 
-        phone = data.get("phone") or data.get("caller") or data.get("from")
+    formatted = format_phone(phone)
 
-        if not phone:
-            return jsonify({"error": "phone yo‘q"}), 400
+    print("Asl:", phone)
+    print("Kesilgan:", formatted)
 
-        formatted = format_phone(phone)
+    contacts = find_contact(formatted)
 
-        print("Asl:", phone)
-        print("Kesilgan:", formatted)
+    if contacts:
+        contact_id = contacts[0]["ID"]
 
-        response = requests.post(
-            BITRIX_WEBHOOK + "crm.lead.add.json",
+        # UPDATE (telefonni to‘g‘rilaymiz)
+        requests.post(
+            BITRIX_WEBHOOK + "crm.contact.update.json",
             json={
+                "id": contact_id,
                 "fields": {
-                    "TITLE": "Qo'ng'iroq",
                     "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
                 }
             }
         )
 
-        print("Bitrix javobi:", response.text)
+        return jsonify({"status": "updated", "contact_id": contact_id})
 
-        return jsonify({"status": "ok"})
+    else:
+        # YANGI CONTACT
+        response = requests.post(
+            BITRIX_WEBHOOK + "crm.contact.add.json",
+            json={
+                "fields": {
+                    "NAME": "Avto kontakt",
+                    "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
+                }
+            }
+        )
 
-    except Exception as e:
-        print("Xatolik:", str(e))
-        return jsonify({"error": str(e)}), 500
+        contact_id = response.json().get("result")
 
+        # YANGI DEAL
+        requests.post(
+            BITRIX_WEBHOOK + "crm.deal.add.json",
+            json={
+                "fields": {
+                    "TITLE": "Qo'ng'iroq",
+                    "CONTACT_ID": contact_id
+                }
+            }
+        )
+
+        return jsonify({"status": "created", "contact_id": contact_id})
+
+@app.route('/')
+def home():
+    return "Server ishlayapti 🚀"
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
