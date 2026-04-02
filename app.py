@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 import requests
-import os
 
 app = Flask(__name__)
 
@@ -11,36 +10,37 @@ def format_phone(phone):
         return phone[3:]
     return phone
 
-def find_contact(phone):
-    response = requests.post(
-        BITRIX_WEBHOOK + "crm.contact.list.json",
-        json={
-            "filter": {"PHONE": phone},
-            "select": ["ID", "NAME"]
-        }
-    )
-    return response.json().get("result", [])
-
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
-    data = request.json
+    phone = request.args.get("phone")
 
-    phone = data.get("phone")
+    print("Keldi:", phone)
 
     if not phone:
-        return jsonify({"error": "no phone"}), 400
+        return jsonify({"error": "phone yo‘q"})
 
     formatted = format_phone(phone)
 
-    print("Asl:", phone)
     print("Kesilgan:", formatted)
 
-    contacts = find_contact(formatted)
+    # 🔍 1. DUBLIKATNI QIDIRAMIZ
+    search = requests.post(
+        BITRIX_WEBHOOK + "crm.duplicate.findbycomm.json",
+        json={
+            "type": "PHONE",
+            "values": [formatted]
+        }
+    ).json()
+
+    print("Search:", search)
+
+    contacts = search.get("result", {}).get("CONTACT", [])
 
     if contacts:
-        contact_id = contacts[0]["ID"]
+        contact_id = contacts[0]
+        print("Topildi:", contact_id)
 
-        # UPDATE (telefonni to‘g‘rilaymiz)
+        # ✏️ UPDATE (kontaktga yozamiz)
         requests.post(
             BITRIX_WEBHOOK + "crm.contact.update.json",
             json={
@@ -51,38 +51,23 @@ def webhook():
             }
         )
 
-        return jsonify({"status": "updated", "contact_id": contact_id})
+        return jsonify({"status": "updated"})
 
     else:
-        # YANGI CONTACT
-        response = requests.post(
+        print("Topilmadi → yangi yaratiladi")
+
+        # 🆕 YANGI KONTAKT
+        new_contact = requests.post(
             BITRIX_WEBHOOK + "crm.contact.add.json",
             json={
                 "fields": {
-                    "NAME": "Avto kontakt",
+                    "NAME": "Qo‘ng‘iroq",
                     "PHONE": [{"VALUE": formatted, "VALUE_TYPE": "WORK"}]
                 }
             }
-        )
+        ).json()
 
-        contact_id = response.json().get("result")
+        return jsonify({"status": "created", "contact": new_contact})
 
-        # YANGI DEAL
-        requests.post(
-            BITRIX_WEBHOOK + "crm.deal.add.json",
-            json={
-                "fields": {
-                    "TITLE": "Qo'ng'iroq",
-                    "CONTACT_ID": contact_id
-                }
-            }
-        )
-
-        return jsonify({"status": "created", "contact_id": contact_id})
-
-@app.route('/')
-def home():
-    return "Server ishlayapti 🚀"
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+import os
+app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
