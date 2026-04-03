@@ -1,45 +1,57 @@
 from flask import Flask, request, jsonify
+import requests
 
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "Server ishlayapti"
+# 👉 BU YERGA BITRIX WEBHOOK QO'Y
+BITRIX_WEBHOOK = "https://derza.bitrix24.kz/rest/1/r1hgjqdeoyhdtx1n/"
 
-@app.route("/webhook", methods=["POST", "GET"])
-def webhook():
+def get_contact_phone(contact_id):
     try:
-        # 🔹 JSON yoki form data olish
-        data = request.get_json(silent=True)
+        url = BITRIX_WEBHOOK + "crm.contact.get.json"
+        response = requests.get(url, params={"id": contact_id})
+        data = response.json()
 
-        if not data:
-            data = request.form.to_dict()
+        phones = data.get("result", {}).get("PHONE", [])
 
-        print("RAW DATA:", data)
+        if phones:
+            return phones[0]["VALUE"]
 
-        # 🔹 agar list bo‘lsa → fix
-        if isinstance(data, list):
-            data = data[0]
-
-        # 🔹 phone olish
-        phone = None
-
-        if isinstance(data, dict):
-            phone = data.get("phone")
-
-        return jsonify({
-            "status": "ok",
-            "phone": phone,
-            "received": data
-        })
+        return None
 
     except Exception as e:
-        print("ERROR:", str(e))
-        return jsonify({
-            "status": "error",
-            "message": str(e)
-        })
+        print("ERROR:", e)
+        return None
 
-# Railway uchun
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    data = request.json
+
+    print("RAW DATA:", data)
+
+    contact_id = data.get("contact_id")
+    deal_id = data.get("deal_id")
+
+    phone = None
+
+    if contact_id:
+        phone = get_contact_phone(contact_id)
+
+    print("CONTACT_ID:", contact_id)
+    print("PHONE:", phone)
+
+    return jsonify({
+        "status": "ok",
+        "phone": phone,
+        "received": data
+    })
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return "CRM Webhook ishlayapti 🚀"
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    app.run(host="0.0.0.0", port=8000)
