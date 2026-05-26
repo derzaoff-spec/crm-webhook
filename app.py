@@ -7,19 +7,32 @@ app = Flask(__name__)
 # 🔑 BITRIX WEBHOOK (o'zingnikini qo'y)
 BITRIX_WEBHOOK = "https://derza.bitrix24.kz/rest/1/r1hgjqdeoyhdtx1n/"
 
-# 📌 Telefonni tozalash va kesish
+# 📌 Telefonni tozalash va formatlash
 def format_phone(phone):
     if not phone:
         return None
 
-    # faqat raqamlarni qoldiramiz
+    # Faqat raqamlarni qoldiramiz
     phone = re.sub(r"\D", "", phone)
 
-    # 998 yoki +998 ni kesadi
+    # 998 kodni olib tashlaymiz (agar boshida bo'lsa)
     if phone.startswith("998"):
         phone = phone[3:]
 
-    return phone
+    # Endi phone faqat mahalliy raqam (9 yoki 8 xonali bo'lishi mumkin)
+
+    if len(phone) == 12 and phone.startswith("998"):
+        # +998901234567 → 901234567 (998 olib tashlanadi)
+        return phone[3:]
+
+    elif len(phone) == 9:
+        # 901234567 → 998901234567 (998 qo'shiladi)
+        return "998" + phone
+
+    else:
+        # Boshqa noto'g'ri formatlar — o'zgartirishsiz qaytaramiz
+        print(f"PHONE FORMAT WARNING: kutilmagan uzunlik {len(phone)} → {phone}")
+        return phone
 
 
 # 📌 Deal orqali contact_id olish
@@ -47,7 +60,7 @@ def get_contact_phone(contact_id):
 def update_contact_phone(contact_id, phone):
     url = BITRIX_WEBHOOK + "crm.contact.update.json"
 
-    # ❗ 1. eski telefonlarni tozalaymiz
+    # ❗ 1. Eski telefonlarni tozalaymiz
     requests.post(url, json={
         "id": contact_id,
         "fields": {
@@ -55,7 +68,7 @@ def update_contact_phone(contact_id, phone):
         }
     })
 
-    # ❗ 2. yangi telefonni yozamiz
+    # ❗ 2. Yangi telefonni yozamiz
     response = requests.post(url, json={
         "id": contact_id,
         "fields": {
@@ -90,18 +103,18 @@ def webhook():
     if not contact_id:
         return jsonify({"error": "contact_id topilmadi"})
 
-    # 2. telefonni olamiz
+    # 2. Telefonni olamiz
     phone = get_contact_phone(contact_id)
     print("PHONE RAW:", phone)
 
     if not phone:
         return jsonify({"error": "telefon topilmadi"})
 
-    # 3. format qilamiz
+    # 3. Format qilamiz
     formatted = format_phone(phone)
     print("PHONE FORMATTED:", formatted)
 
-    # 4. yangilaymiz (eski o'chadi)
+    # 4. Yangilaymiz (eski o'chadi)
     update_contact_phone(contact_id, formatted)
 
     return jsonify({
